@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Advanced Aim Trainer</title>
+    <style>
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            cursor: crosshair; 
+            background: linear-gradient(135deg, #2c3e50, #3498db);
+            font-family: Arial, sans-serif;
+        }
+        #crosshair {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            width: 20px;
+            height: 20px;
+            border: 2px solid white;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            z-index: 1000;
+        }
+        #score, #timer, #mode {
+            position: fixed;
+            color: white;
+            font-size: 24px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+        #score { top: 10px; left: 10px; }
+        #timer { top: 10px; right: 10px; }
+        #mode { 
+            top: 10px; 
+            left: 50%; 
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.3);
+            padding: 5px 15px;
+            border-radius: 10px;
+        }
+        #mode-selector, #game-controls {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 10px;
+        }
+        .mode-btn, .control-btn {
+            background: rgba(255,255,255,0.2);
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            cursor: pointer;
+            border-radius: 5px;
+            transition: background 0.3s;
+        }
+        .mode-btn:hover, .control-btn:hover {
+            background: rgba(255,255,255,0.4);
+        }
+        .mode-btn.active, .control-btn.active {
+            background: rgba(255,255,255,0.5);
+        }
+        #game-controls {
+            bottom: -50px;
+            transition: bottom 0.3s;
+        }
+        #game-controls.show {
+            bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div id="crosshair"></div>
+    <div id="score">Score: 0</div>
+    <div id="timer">Time: 60</div>
+    <div id="mode">Mode: Stationary</div>
+    <div id="mode-selector">
+        <button class="mode-btn active" data-mode="0">Stationary</button>
+        <button class="mode-btn" data-mode="1">Slow Move</button>
+        <button class="mode-btn" data-mode="2">Fast Move</button>
+        <button class="mode-btn" data-mode="3">Blinking</button>
+        <button class="mode-btn" data-mode="4">Fast Move + Blink</button>
+    </div>
+    <div id="game-controls">
+        <button class="control-btn" id="reset-btn">Reset Game</button>
+        <button class="control-btn" id="continue-btn">Continue</button>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        // Scene setup
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // Targets
+        const targets = [];
+        const targetGeometry = new THREE.SphereGeometry(0.5, 32, 32);
+        const targetMaterial = new THREE.MeshPhongMaterial({ color: 0x808080 }); // Gray color
+
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+        scene.add(ambientLight);
+        const pointLight = new THREE.PointLight(0xffffff, 1);
+        pointLight.position.set(5, 5, 5);
+        scene.add(pointLight);
+
+        // Game variables
+        let score = 0;
+        let timeLeft = 60;
+        let gameOver = false;
+        let currentMode = 0;
+        let timerInterval;
+
+        // Check if position is too close to existing targets
+        function isValidPosition(newPosition) {
+            return !targets.some(target => {
+                return newPosition.distanceTo(target.position) < 2; // Minimum distance
+            });
+        }
+
+        // Create targets
+        function createTarget() {
+            const target = new THREE.Mesh(targetGeometry, targetMaterial);
+            
+            // Find a valid position with EXTREME scattering
+            let validPosition = false;
+            while (!validPosition) {
+                target.position.set(
+                    (Math.random() - 0.5) * 20, // MUCH wider horizontal spread
+                    (Math.random() - 0.5) * 15, // MUCH wider vertical spread
+                    -5 - (Math.random() * 15)   // Increased and more varied depth
+                );
+                
+                if (isValidPosition(target.position)) {
+                    validPosition = true;
+                }
+            }
+            
+            // Mode-specific velocities and properties
+            switch(currentMode) {
+                case 0: // Stationary
+                    target.velocity = new THREE.Vector3(0, 0, 0);
+                    target.blinkInterval = null;
+                    break;
+                case 1: // Slow Move
+                    target.velocity = new THREE.Vector3(
+                        (Math.random() - 0.5) * 0.08,  // Increased movement
+                        (Math.random() - 0.5) * 0.08,
+                        0
+                    );
+                    target.blinkInterval = null;
+                    break;
+                case 2: // Fast Move
+                    target.velocity = new THREE.Vector3(
+                        (Math.random() - 0.5) * 0.3,  // Much more dramatic movement
+                        (Math.random() - 0.5) * 0.3,
+                        0
+                    );
+                    target.blinkInterval = null;
+                    break;
+                case 3: // Blinking
+                    target.velocity = new THREE.Vector3(0, 0, 0);
+                    target.visible = true;
+                    target.blinkInterval = setInterval(() => {
+                        target.visible = !target.visible;
+                        target.material.opacity = target.visible ? 1 : 0;
+                    }, 500); // Blink every 500ms
+                    target.material.transparent = true;
+                    break;
+                case 4: // Fast Move + Blink
+                    target.velocity = new THREE.Vector3(
+                        (Math.random() - 0.5) * 0.4,  // Even more extreme movement
+                        (Math.random() - 0.5) * 0.4,
+                        0
+                    );
+                    target.visible = true;
+                    target.blinkInterval = setInterval(() => {
+                        target.visible = !target.visible;
+                        target.material.opacity = target.visible ? 1 : 0;
+                    }, 250); // Faster blinking
+                    target.material.transparent = true;
+                    break;
+            }
+            
+            scene.add(target);
+            targets.push(target);
+        }
+
+        // Reset game for new mode
+        function resetGame(mode) {
+            // Clear existing targets
+            targets.forEach(target => {
+                if (target.blinkInterval) {
+                    clearInterval(target.blinkInterval);
+                }
+                scene.remove(target);
+            });
+            targets.length = 0;
+
+            // Reset game variables
+            score = 0;
+            timeLeft = 60;
+            currentMode = mode;
+            gameOver = false;
+
+            // Stop and restart timer
+            clearInterval(timerInterval);
+            timerInterval = setInterval(updateTimer, 1000);
+
+            // Hide game controls
+            document.getElementById('game-controls').classList.remove('show');
+
+            // Update UI
+            document.getElementById('score').textContent = 'Score: 0';
+            document.getElementById('timer').textContent = 'Time: 60';
+            
+            // Update mode text
+            const modeNames = [
+                'Stationary', 
+                'Slow Move', 
+                'Fast Move', 
+                'Blinking', 
+                'Fast Move + Blink'
+            ];
+            document.getElementById('mode').textContent = `Mode: ${modeNames[mode]}`;
+
+            // Create new targets
+            for (let i = 0; i < 10; i++) {
+                createTarget();
+            }
+        }
+
+        // Camera setup
+        camera.position.z = 5;
+
+        // Shooting mechanism
+        function onMouseClick(event) {
+            if (gameOver) return;
+
+            // Raycaster for precise targeting
+            const raycaster = new THREE.Raycaster();
+            const mouse = new THREE.Vector2(
+                (event.clientX / window.innerWidth) * 2 - 1,
+                -(event.clientY / window.innerHeight) * 2 + 1
+            );
+
+            raycaster.setFromCamera(mouse, camera);
+
+            const intersects = raycaster.intersectObjects(targets);
+
+            if (intersects.length > 0) {
+                // Hit target
+                const hitTarget = intersects[0].object;
+                
+                // Clear blink interval if exists
+                if (hitTarget.blinkInterval) {
+                    clearInterval(hitTarget.blinkInterval);
+                }
+                
+                scene.remove(hitTarget);
+                targets.splice(targets.indexOf(hitTarget), 1);
+                
+                // Scoring
+                score++;
+                document.getElementById('score').textContent = `Score: ${score}`;
+                
+                // Create new target
+                createTarget();
+            }
+        }
+
+        // Game loop
+        function animate() {
+            if (gameOver) return;
+
+            requestAnimationFrame(animate);
+
+            // Move targets based on mode
+            targets.forEach(target => {
+                if (currentMode === 1 || currentMode === 2 || currentMode === 4) {
+                    target.position.add(target.velocity);
+
+                    // Bounce off walls (much larger area)
+                    if (Math.abs(target.position.x) > 10) target.velocity.x *= -1;
+                    if (Math.abs(target.position.y) > 7) target.velocity.y *= -1;
+                }
+            });
+
+            renderer.render(scene, camera);
+        }
+
+        // Timer
+        function updateTimer() {
+            if (gameOver) return;
+
+            timeLeft--;
+            document.getElementById('timer').textContent = `Time: ${timeLeft}`;
+
+            if (timeLeft <= 0) {
+                gameOver = true;
+                clearInterval(timerInterval);
+                
+                // Show game controls
+                document.getElementById('game-controls').classList.add('show');
+            }
+        }
+
+        // Mode selection
+        document.getElementById('mode-selector').addEventListener('click', (e) => {
+            if (e.target.classList.contains('mode-btn')) {
+                // Remove active class from all buttons
+                document.querySelectorAll('.mode-btn').forEach(btn => {
+                    btn.classList.remove('active');
+                });
+                
+                // Add active class to clicked button
+                e.target.classList.add('active');
+                
+                // Reset game with selected mode
+                resetGame(parseInt(e.target.dataset.mode));
+            }
+        });
+
+        // Reset and Continue buttons
+        document.getElementById('reset-btn').addEventListener('click', () => {
+            resetGame(currentMode);
+        });
+
+        document.getElementById('continue-btn').addEventListener('click', () => {
+            document.getElementById('game-controls').classList.remove('show');
+        });
+
+        // Event listeners
+        window.addEventListener('click', onMouseClick);
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Start initial game
+        animate();
+        timerInterval = setInterval(updateTimer, 1000);
+    </script>
+</body>
+</html>
